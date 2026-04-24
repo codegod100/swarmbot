@@ -27,7 +27,7 @@ def setup_logging() -> logging.Logger:
     log.setLevel(logging.DEBUG)
 
     handler = logging.StreamHandler(sys.stdout)
-    level_name = os.getenv("BOT_LOG_LEVEL", "INFO").upper()
+    level_name = os.getenv("BOT_LOG_LEVEL", "DEBUG").upper()
     handler.setLevel(getattr(logging, level_name, logging.INFO))
 
     fmt = logging.Formatter(

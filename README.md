@@ -32,6 +32,12 @@ An async IRC bot that connects to `irc.freeq.at` and dispatches `@mention` messa
 uv run bot.py
 ```
 
+Logging is **verbose by default** (shows every IRC line, agent reasoning, tool calls, and API events). To quiet down:
+
+```bash
+BOT_LOG_LEVEL=INFO uv run bot.py
+```
+
 Or install and run as a script:
 ```bash
 uv pip install .
