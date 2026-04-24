@@ -6,6 +6,7 @@ import os
 import pathlib
 import re
 import sys
+import time
 from typing import Dict, Optional
 
 import yaml
@@ -66,12 +67,14 @@ class IRCBot:
 
         self.reader: Optional[asyncio.StreamReader] = None
         self.writer: Optional[asyncio.StreamWriter] = None
+        self.ready_after: float = 0.0
 
     async def connect(self):
         self.reader, self.writer = await asyncio.open_connection(self.server, self.port)
         self._send(f"NICK {self.nick}")
         self._send(f"USER {self.nick} 0 * :{self.nick}")
         self._send(f"JOIN {self.channel}")
+        self.ready_after = time.time() + 3
 
     def _send(self, line: str):
         if self.writer:
@@ -113,10 +116,14 @@ class IRCBot:
 
             # Only respond to messages in our target channel that mention our bot or use @agent
             # But per user request: only @mention dispatch, no auto-threading
+            if sender == self.nick:
+                return  # ignore our own messages (echo-message / bouncers)
             if not target.startswith("#"):
                 return  # ignore PMs for now
             if target != self.channel:
                 return
+            if time.time() < self.ready_after:
+                return  # ignore scrollback replay for 3s after join
 
             match = MENTION_RE.match(msg)
             if not match:
