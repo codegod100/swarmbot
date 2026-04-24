@@ -7,7 +7,7 @@ irc:
 letta:
   api_key: "${LETTA_API_KEY}"
   base_url: "https://api.letta.com/v1"
-  timeout: 60
+  timeout: 180
 
 agents:
   researcher: "agent-941987c9-9a0e-4076-9ff2-f05354529d47"

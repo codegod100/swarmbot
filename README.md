@@ -88,3 +88,8 @@ Then restart the bot. Users can immediately use `@coder ...`.
 | `Unknown agent` | Name not in `agents` map | Add it to `config.yaml` |
 | Timeout errors | Letta API is slow | Increase `letta.timeout` |
 | Won't reconnect | Network blip | Wait — backoff handles it |
+
+## Related Projects
+
+- **[panproto](https://github.com/panproto/panproto)** — Schematic version control for data schemas.
+  Relevant for evolving `config.yaml` structure, agent response formats, or conversation memory schemas as the bot grows.

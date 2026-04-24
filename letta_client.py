@@ -10,7 +10,7 @@ import certifi
 
 
 class LettaClient:
-    def __init__(self, base_url: str, api_key: Optional[str] = None, timeout: int = 60):
+    def __init__(self, base_url: str, api_key: Optional[str] = None, timeout: int = 180):
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key or os.getenv("LETTA_API_KEY", "")
         self.timeout = aiohttp.ClientTimeout(total=timeout)
