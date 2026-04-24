@@ -95,6 +95,7 @@ class IRCBot:
         self.max_len = bot_cfg.get("max_message_length", MAX_MSG_LEN)
         self.reconnect_delay = bot_cfg.get("reconnect_delay", 5)
         self.reconnect_backoff = bot_cfg.get("reconnect_backoff", 2)
+        self.chunk_delay = bot_cfg.get("chunk_delay", 0.5)
 
         self.reader: Optional[asyncio.StreamReader] = None
         self.writer: Optional[asyncio.StreamWriter] = None
@@ -113,13 +114,29 @@ class IRCBot:
             self.writer.write((line + "\r\n").encode("utf-8"))
             self.log_irc.debug(">> %s", line)
 
-    def _privmsg(self, target: str, text: str):
-        # Normalize whitespace (flatten newlines, collapse runs) and send as one chunk
+    async def _privmsg(self, target: str, text: str):
+        for i, chunk in enumerate(self._chunk_text(text)):
+            self._send_raw(f"PRIVMSG {target} :{chunk}")
+            self.log_reply.info("<< %s: %s", target, chunk[:120])
+            if i > 0:
+                await asyncio.sleep(self.chunk_delay)
+
+    def _chunk_text(self, text: str):
+        # Normalize whitespace then split into IRC-safe chunks
         normalized = " ".join(text.split())
-        if len(normalized) > self.max_len:
-            normalized = normalized[: self.max_len - 3].rstrip() + "..."
-        self._send_raw(f"PRIVMSG {target} :{normalized}")
-        self.log_reply.info("<< %s: %s", target, normalized[:120])
+        if len(normalized) <= self.max_len:
+            return [normalized]
+        chunks = []
+        while normalized:
+            if len(normalized) <= self.max_len:
+                chunks.append(normalized)
+                break
+            idx = normalized.rfind(" ", 0, self.max_len)
+            if idx == -1:
+                idx = self.max_len
+            chunks.append(normalized[:idx])
+            normalized = normalized[idx:].lstrip()
+        return chunks
 
     async def handle_line(self, line: str):
         self.log_irc.debug("<< %s", line)
@@ -161,10 +178,10 @@ class IRCBot:
         agent_id = self.agents.get(agent_name)
         if not agent_id:
             available = ", ".join(sorted(self.agents.keys()))
-            self._privmsg(target, f"{sender}: Unknown agent '@{agent_name}'. Available: {available}")
+            await self._privmsg(target, f"{sender}: Unknown agent '@{agent_name}'. Available: {available}")
             return
 
-        self._privmsg(target, f"{sender}: researching via @{agent_name}...")
+        await self._privmsg(target, f"{sender}: researching via @{agent_name}...")
         assistant_reply = ""
         try:
             async for event in self.letta.stream_message(agent_id, payload):
@@ -181,7 +198,10 @@ class IRCBot:
                 elif msg_type == "assistant_message":
                     content = event.get("content", "")
                     self.log_letta.info("[assistant] %s", content[:200])
-                    assistant_reply += content
+                    if assistant_reply:
+                        assistant_reply += " " + content
+                    else:
+                        assistant_reply = content
 
                 elif msg_type == "tool_call_message":
                     name = event.get("name", "unknown_tool")
@@ -208,25 +228,25 @@ class IRCBot:
                     self.log_letta.debug("[%s] %s", msg_type, str(event)[:200])
 
         except AgentNotFoundError:
-            self._privmsg(target, f"{sender}: Agent '@{agent_name}' no longer exists on Letta.")
+            await self._privmsg(target, f"{sender}: Agent '@{agent_name}' no longer exists on Letta.")
             return
         except RateLimitError:
-            self._privmsg(target, f"{sender}: Rate limited by Letta API, wait a moment.")
+            await self._privmsg(target, f"{sender}: Rate limited by Letta API, wait a moment.")
             return
         except asyncio.TimeoutError:
-            self._privmsg(target, f"{sender}: Letta API timed out, try again later.")
+            await self._privmsg(target, f"{sender}: Letta API timed out, try again later.")
             return
         except APIError as exc:
-            self._privmsg(target, f"{sender}: Letta API error {exc.status}: {exc.body}")
+            await self._privmsg(target, f"{sender}: Letta API error {exc.status}: {exc.body}")
             return
         except Exception as exc:
-            self._privmsg(target, f"{sender}: Error talking to Letta: {type(exc).__name__}: {exc}")
+            await self._privmsg(target, f"{sender}: Error talking to Letta: {type(exc).__name__}: {exc}")
             return
 
         if not assistant_reply:
             assistant_reply = "(no response)"
 
-        self._privmsg(target, f"{sender}: {assistant_reply}")
+        await self._privmsg(target, f"{sender}: {assistant_reply}")
 
     async def run(self):
         delay = self.reconnect_delay
