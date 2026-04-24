@@ -1,7 +1,9 @@
 """Async IRC bot that dispatches @mentions to Letta agents."""
 
 import asyncio
+import json
 import os
+import pathlib
 import re
 import sys
 from typing import Dict, Optional
@@ -26,6 +28,18 @@ def load_config(path: str = "config.yaml") -> dict:
         return os.getenv(var, f"${{{var}}}")
     raw = re.sub(r"\$\{([^}]+)\}", replacer, raw)
     return yaml.safe_load(raw)
+
+
+def load_letta_key_from_settings() -> Optional[str]:
+    """Load LETTA_API_KEY from Letta Code's settings.json if env var is unset."""
+    path = pathlib.Path.home() / ".letta" / "settings.json"
+    if not path.exists():
+        return None
+    try:
+        data = json.loads(path.read_text())
+        return data.get("env", {}).get("LETTA_API_KEY")
+    except (json.JSONDecodeError, OSError):
+        return None
 
 
 class IRCBot:
@@ -172,6 +186,10 @@ class IRCBot:
 
 
 def main():
+    if not os.getenv("LETTA_API_KEY"):
+        key = load_letta_key_from_settings()
+        if key:
+            os.environ["LETTA_API_KEY"] = key
     config = load_config()
     bot = IRCBot(config)
     try:
