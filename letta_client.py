@@ -1,10 +1,11 @@
 """Async client for the Letta Cloud API."""
 
+import json
 import os
 import ssl
-import aiohttp
-from typing import Optional
+from typing import AsyncIterator, Optional
 
+import aiohttp
 import certifi
 
 
@@ -16,7 +17,7 @@ class LettaClient:
         self._ssl = ssl.create_default_context(cafile=certifi.where())
 
     async def send_message(self, agent_id: str, text: str) -> str:
-        """Send a message to a Letta agent and return the assistant reply."""
+        """Send a message to a Letta agent and return the assistant reply (non-streaming fallback)."""
         url = f"{self.base_url}/agents/{agent_id}/messages"
         headers = {
             "Authorization": f"Bearer {self.api_key}",
@@ -41,6 +42,40 @@ class LettaClient:
             if msg.get("message_type") == "assistant_message":
                 return msg.get("content", "")
         return "(no response)"
+
+    async def stream_message(self, agent_id: str, text: str) -> AsyncIterator[dict]:
+        """Stream SSE events from Letta /messages/stream endpoint."""
+        url = f"{self.base_url}/agents/{agent_id}/messages/stream"
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+            "Accept": "text/event-stream",
+        }
+        payload = {"input": text}
+
+        connector = aiohttp.TCPConnector(ssl=self._ssl)
+        async with aiohttp.ClientSession(timeout=self.timeout, connector=connector) as session:
+            async with session.post(url, headers=headers, json=payload) as resp:
+                if resp.status == 404:
+                    raise AgentNotFoundError(f"Agent {agent_id} not found")
+                if resp.status == 429:
+                    raise RateLimitError("Rate limited by Letta API")
+                if resp.status >= 400:
+                    body = await resp.text()
+                    raise APIError(resp.status, body[:200])
+
+                async for line in resp.content:
+                    line = line.decode("utf-8", errors="replace").strip()
+                    if not line:
+                        continue
+                    if line.startswith("data: "):
+                        data_str = line[6:]
+                        if data_str == "[DONE]":
+                            return
+                        try:
+                            yield json.loads(data_str)
+                        except json.JSONDecodeError:
+                            continue
 
 
 class AgentNotFoundError(Exception):
