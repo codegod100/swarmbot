@@ -12,9 +12,10 @@ An async IRC bot that connects to `irc.freeq.at` and dispatches `@mention` messa
 
 ## Setup
 
-1. **Install dependencies** (Python 3.9+):
+1. **Install uv** (if you don't have it):
    ```bash
-   pip install -r requirements.txt
+   pip install uv
+   # or: curl -LsSf https://astral.sh/uv/install.sh | sh
    ```
 
 2. **Set your Letta API key**:
@@ -28,7 +29,13 @@ An async IRC bot that connects to `irc.freeq.at` and dispatches `@mention` messa
 ## Running
 
 ```bash
-python bot.py
+uv run bot.py
+```
+
+Or install and run as a script:
+```bash
+uv pip install .
+swarmbot
 ```
 
 The bot will join `#swarm` as `swarmbot` and wait for `@mention` commands.
