@@ -114,29 +114,20 @@ class IRCBot:
             self.log_irc.debug(">> %s", line)
 
     def _privmsg(self, target: str, text: str):
-        for chunk in self._chunk_text(text):
-            self._send_raw(f"PRIVMSG {target} :{chunk}")
-            self.log_reply.info("<< %s: %s", target, chunk[:120])
-
-    def _chunk_text(self, text: str):
-        if len(text) <= self.max_len:
-            return [text]
-        chunks = []
-        while text:
-            if len(text) <= self.max_len:
-                chunks.append(text)
-                break
-            idx = text.rfind(" ", 0, self.max_len)
-            if idx == -1:
-                idx = self.max_len
-            chunks.append(text[:idx])
-            text = text[idx:].lstrip()
-        return chunks
+        # Normalize whitespace (flatten newlines, collapse runs) and send as one chunk
+        normalized = " ".join(text.split())
+        if len(normalized) > self.max_len:
+            normalized = normalized[: self.max_len - 3].rstrip() + "..."
+        self._send_raw(f"PRIVMSG {target} :{normalized}")
+        self.log_reply.info("<< %s: %s", target, normalized[:120])
 
     async def handle_line(self, line: str):
+        self.log_irc.debug("<< %s", line)
+
         if line.startswith("PING "):
             payload = line.split(" ", 1)[1]
             self._send_raw(f"PONG {payload}")
+            self.log.debug("PONG → %s", payload)
             return
 
         if " PRIVMSG " in line:
@@ -144,8 +135,6 @@ class IRCBot:
             sender = prefix[1:].split("!", 1)[0] if prefix.startswith(":") else ""
             target, _, msg = rest.partition(" :")
             msg = msg.strip()
-
-            self.log_irc.debug("<< %s", line)
 
             if sender == self.nick:
                 return
@@ -164,6 +153,9 @@ class IRCBot:
             self.log_dispatch.info(
                 "%s → @%s: %s", sender, agent_name, payload[:200])
             await self.dispatch(sender, target, agent_name, payload)
+            return
+
+        self.log.debug("Unhandled IRC line: %s", line)
 
     async def dispatch(self, sender: str, target: str, agent_name: str, payload: str):
         agent_id = self.agents.get(agent_name)
@@ -244,6 +236,7 @@ class IRCBot:
                 while True:
                     raw = await self.reader.readline()
                     if not raw:
+                        self.log.warning("Server closed connection (empty read)")
                         break
                     line = raw.decode("utf-8", errors="replace").strip()
                     if line:
@@ -251,7 +244,7 @@ class IRCBot:
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
-                self.log.error("Connection error: %s", exc)
+                self.log.error("Connection lost", exc_info=True)
                 self.log.info("Reconnecting in %ss...", delay)
                 await asyncio.sleep(delay)
                 delay = min(delay * self.reconnect_backoff, 300)
