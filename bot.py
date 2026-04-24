@@ -164,6 +164,7 @@ class IRCBot:
             self._privmsg(target, f"{sender}: Unknown agent '@{agent_name}'. Available: {available}")
             return
 
+        self._privmsg(target, f"{sender}: researching via @{agent_name}...")
         assistant_reply = ""
         try:
             async for event in self.letta.stream_message(agent_id, payload):
