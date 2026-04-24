@@ -145,8 +145,9 @@ class IRCBot:
     async def handle_line(self, line: str):
         self.log_irc.debug("<< %s", line)
 
-        if line.startswith("PING "):
-            payload = line.split(" ", 1)[1]
+        ping_match = re.match(r'^(:[^ ]+\s+)?PING\s+(.*)$', line)
+        if ping_match:
+            payload = ping_match.group(2)
             self._send_raw(f"PONG {payload}")
             self.log.debug("PONG → %s", payload)
             return
