@@ -99,7 +99,7 @@ class IRCBot:
         self.max_len = bot_cfg.get("max_message_length", MAX_MSG_LEN)
         self.reconnect_delay = bot_cfg.get("reconnect_delay", 5)
         self.reconnect_backoff = bot_cfg.get("reconnect_backoff", 2)
-        self.chunk_delay = bot_cfg.get("chunk_delay", 0.5)
+        self.chunk_delay = bot_cfg.get("chunk_delay", 1.0)
 
         self.reader: Optional[asyncio.StreamReader] = None
         self.writer: Optional[asyncio.StreamWriter] = None
@@ -113,14 +113,23 @@ class IRCBot:
         self.ready_after = time.time() + 3
         self.log.info("Connected to %s:%s as %s", self.server, self.port, self.nick)
 
-    def _send_raw(self, line: str):
-        if self.writer:
-            self.writer.write((line + "\r\n").encode("utf-8"))
-            self.log_irc.debug(">> %s", line)
+    def _send_raw(self, line: str) -> bool:
+        if self.writer and not self.writer.is_closing():
+            try:
+                self.writer.write((line + "\r\n").encode("utf-8"))
+                self.log_irc.debug(">> %s", line)
+                return True
+            except (BrokenPipeError, ConnectionResetError):
+                self.log.warning(f"{RED}Tried to write to closed IRC socket{RST}")
+                return False
+        return False
 
     async def _privmsg(self, target: str, text: str):
         for i, chunk in enumerate(self._chunk_text(text)):
-            self._send_raw(f"PRIVMSG {target} :{chunk}")
+            ok = self._send_raw(f"PRIVMSG {target} :{chunk}")
+            if not ok:
+                self.log.warning("Aborting multi-chunk reply — socket is dead")
+                return
             self.log_reply.info("<< %s: %s", target, chunk[:120])
             if i > 0:
                 await asyncio.sleep(self.chunk_delay)
@@ -269,6 +278,11 @@ class IRCBot:
                         await self.handle_line(line)
             except asyncio.CancelledError:
                 raise
+            except (BrokenPipeError, ConnectionResetError):
+                self.log.error(f"{RED}Server dropped connection (flood or network){RST}")
+                self.log.info(f"{RED}Reconnecting in %ss...{RST}", delay)
+                await asyncio.sleep(delay)
+                delay = min(delay * self.reconnect_backoff, 300)
             except Exception as exc:
                 self.log.error(f"{RED}Connection lost{RST}", exc_info=True)
                 self.log.info(f"{RED}Reconnecting in %ss...{RST}", delay)

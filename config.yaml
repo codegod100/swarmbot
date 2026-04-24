@@ -16,4 +16,4 @@ bot:
   max_message_length: 400
   reconnect_delay: 5
   reconnect_backoff: 2
-  chunk_delay: 0.5
+  chunk_delay: 1.0
