@@ -1,0 +1,8 @@
+Metadata-Version: 2.4
+Name: swarmbot
+Version: 0.1.0
+Summary: IRC bot that dispatches @mentions to Letta agents
+Requires-Python: >=3.9
+Requires-Dist: aiohttp>=3.9
+Requires-Dist: pyyaml>=6.0
+Requires-Dist: certifi>=2024.0

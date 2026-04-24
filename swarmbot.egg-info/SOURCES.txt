@@ -1,0 +1,10 @@
+README.md
+bot.py
+letta_client.py
+pyproject.toml
+swarmbot.egg-info/PKG-INFO
+swarmbot.egg-info/SOURCES.txt
+swarmbot.egg-info/dependency_links.txt
+swarmbot.egg-info/entry_points.txt
+swarmbot.egg-info/requires.txt
+swarmbot.egg-info/top_level.txt
