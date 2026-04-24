@@ -27,11 +27,13 @@ class LettaClient:
         connector = aiohttp.TCPConnector(ssl=self._ssl)
         async with aiohttp.ClientSession(timeout=self.timeout, connector=connector) as session:
             async with session.post(url, headers=headers, json=payload) as resp:
+                body = await resp.text()
                 if resp.status == 404:
                     raise AgentNotFoundError(f"Agent {agent_id} not found")
                 if resp.status == 429:
                     raise RateLimitError("Rate limited by Letta API")
-                resp.raise_for_status()
+                if resp.status >= 400:
+                    raise APIError(resp.status, body[:200])
                 data = await resp.json()
 
         messages = data.get("messages", [])
@@ -47,3 +49,12 @@ class AgentNotFoundError(Exception):
 
 class RateLimitError(Exception):
     pass
+
+
+class APIError(Exception):
+    """Non-2xx HTTP response from Letta API."""
+
+    def __init__(self, status: int, body: str):
+        self.status = status
+        self.body = body
+        super().__init__(f"HTTP {status}: {body}")

@@ -8,7 +8,7 @@ from typing import Dict, Optional
 
 import yaml
 
-from letta_client import LettaClient, AgentNotFoundError, RateLimitError
+from letta_client import LettaClient, AgentNotFoundError, RateLimitError, APIError
 
 # Regex for @agentname followed by message text
 MENTION_RE = re.compile(r"^@(\w+)\s+(.*)$", re.DOTALL)
@@ -129,8 +129,11 @@ class IRCBot:
         except asyncio.TimeoutError:
             self._privmsg(target, f"{sender}: Letta API timed out, try again later.")
             return
+        except APIError as exc:
+            self._privmsg(target, f"{sender}: Letta API error {exc.status}: {exc.body}")
+            return
         except Exception as exc:
-            self._privmsg(target, f"{sender}: Error talking to Letta: {type(exc).__name__}")
+            self._privmsg(target, f"{sender}: Error talking to Letta: {type(exc).__name__}: {exc}")
             return
 
         if not reply:
