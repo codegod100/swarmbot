@@ -20,6 +20,10 @@ MENTION_RE = re.compile(r"^@(\w+)\s+(.*)$", re.DOTALL)
 # IRC protocol max is ~512 bytes including CRLF; stay well under
 MAX_MSG_LEN = 400
 
+# ANSI bold red for terminal disconnect alerts
+RED = "\033[1;31m"
+RST = "\033[0m"
+
 
 def setup_logging() -> logging.Logger:
     """Configure stdout logging with optional level from BOT_LOG_LEVEL env var."""
@@ -257,7 +261,7 @@ class IRCBot:
                 while True:
                     raw = await self.reader.readline()
                     if not raw:
-                        self.log.warning("Server closed connection (empty read)")
+                        self.log.warning(f"{RED}Server closed connection (empty read){RST}")
                         break
                     line = raw.decode("utf-8", errors="replace").strip()
                     if line:
@@ -265,8 +269,8 @@ class IRCBot:
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
-                self.log.error("Connection lost", exc_info=True)
-                self.log.info("Reconnecting in %ss...", delay)
+                self.log.error(f"{RED}Connection lost{RST}", exc_info=True)
+                self.log.info(f"{RED}Reconnecting in %ss...{RST}", delay)
                 await asyncio.sleep(delay)
                 delay = min(delay * self.reconnect_backoff, 300)
             finally:
