@@ -188,14 +188,8 @@ class IRCBot:
 
         self.log.debug("Unhandled IRC line: %s", line)
 
-    async def dispatch(self, sender: str, target: str, agent_name: str, payload: str):
-        agent_id = self.agents.get(agent_name)
-        if not agent_id:
-            available = ", ".join(sorted(self.agents.keys()))
-            await self._privmsg(target, f"{sender}: Unknown agent '@{agent_name}'. Available: {available}")
-            return
-
-        await self._privmsg(target, f"{sender}: researching via @{agent_name}...")
+    async def _stream_and_reply(self, sender: str, target: str, agent_name: str, agent_id: str, payload: str):
+        """Background task: stream Letta events and send the final reply."""
         assistant_reply = ""
         try:
             async for event in self.letta.stream_message(agent_id, payload):
@@ -261,6 +255,17 @@ class IRCBot:
             assistant_reply = "(no response)"
 
         await self._privmsg(target, f"{sender}: {assistant_reply}")
+
+    async def dispatch(self, sender: str, target: str, agent_name: str, payload: str):
+        agent_id = self.agents.get(agent_name)
+        if not agent_id:
+            available = ", ".join(sorted(self.agents.keys()))
+            await self._privmsg(target, f"{sender}: Unknown agent '@{agent_name}'. Available: {available}")
+            return
+
+        await self._privmsg(target, f"{sender}: researching via @{agent_name}...")
+        # Spawn background task so IRC read loop stays responsive to PINGs
+        asyncio.create_task(self._stream_and_reply(sender, target, agent_name, agent_id, payload))
 
     async def run(self):
         delay = self.reconnect_delay
