@@ -1,0 +1,34 @@
+server:
+  mode: api
+  apiKey: ${LETTA_API_KEY}
+
+agent:
+  name: swarm
+  # id: ${LETTA_AGENT_ID}  # Optional: set to use a specific agent
+
+channels:
+  irc:
+    enabled: true
+    server: wss://irc.freeq.at/irc
+    nick: swarmbot
+    joinChannels:
+      - "#swarm"
+      - "#latha"
+    dmPolicy: allowlist
+    allowedUsers:
+      - "nandi.latha.org"
+    maxMessageLength: 400
+    chunkDelay: 1.0
+    messageReadDelayMs: 2000
+  bluesky:
+    enabled: true
+    feedUri: at://did:plc:3guzzweuqraryl3rdkimjamk/app.bsky.feed.generator/for-you
+    mirrorChannel: "#latha"
+    apiBaseUrl: https://api.bsky.app
+    pollIntervalMs: 60000
+    limit: 1
+
+# Agent dispatch map: @<name> → Letta agent ID
+agents:
+  researcher: ${LETTA_AGENT_RESEARCHER_ID}
+  obsidian: ${LETTA_AGENT_OBSIDIAN_ID}

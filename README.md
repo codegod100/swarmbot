@@ -1,6 +1,8 @@
-# swarmbot
+# Swarm
 
-An async IRC bot that connects to `irc.freeq.at` and dispatches `@mention` messages to [Letta](https://letta.com) agents.
+A multi-channel Letta bot that connects to IRC and can also ingest read-only Bluesky feeds, dispatching messages to [Letta](https://letta.com) agents.
+
+The runnable entrypoint is TypeScript: `npm start`.
 
 ## Features
 
@@ -9,42 +11,35 @@ An async IRC bot that connects to `irc.freeq.at` and dispatches `@mention` messa
 - **No auto-threading** — every command must include an explicit `@agent` mention
 - **Reconnect logic** — automatically reconnects to IRC with exponential backoff
 - **Chunked replies** — long agent responses are split safely across multiple IRC lines
+- **Read-only Bluesky feed ingest** — polls a specific feed URI and mirrors new posts into `#latha` without posting back to Bluesky or sending them through Letta
 
 ## Setup
 
-1. **Install uv** (if you don't have it):
+1. **Install dependencies**:
    ```bash
-   pip install uv
-   # or: curl -LsSf https://astral.sh/uv/install.sh | sh
+   npm install
    ```
 
-2. **Set your Letta API key**:
+2. **Create a `.env` file** in the repo root:
    ```bash
-   export LETTA_API_KEY="your-api-key-here"
+   LETTA_API_KEY=your-api-key-here
+   LETTA_AGENT_RESEARCHER_ID=agent-...
+   LETTA_AGENT_OBSIDIAN_ID=agent-...
+   FREEQ_CREDS_PATH=/home/nandi/code/rookery/scripts/rookery-creds.json
    ```
-   Get your key at [app.letta.com/api-keys](https://app.letta.com/api-keys).
+   `npm start` reads this file automatically. You can still export env vars in the shell if you prefer.
 
-3. **Review `config.yaml`** — defaults are already set for `#swarm` on `irc.freeq.at`. Update agent mappings under the `agents:` key as needed.
+3. **Point `FREEQ_CREDS_PATH` at a Rookery creds JSON** — the bot uses the same PDS session flow as `scripts/freeq-connect.ts` in the rookery repo. The file needs `did`, `handle`, `access_token`, `private_key_pem`, `public_jwk`, and `pds_origin`.
+
+4. **Review `swarm.yaml`** — defaults are already set for `#swarm` and `#latha` on `wss://irc.freeq.at/irc`. Update `channels.irc.joinChannels`, the optional `channels.bluesky` feed settings, and the `agents:` map as needed.
 
 ## Running
 
 ```bash
-uv run bot.py
+npm start
 ```
 
-Logging is **verbose by default** (shows every IRC line, agent reasoning, tool calls, and API events). To quiet down:
-
-```bash
-BOT_LOG_LEVEL=INFO uv run bot.py
-```
-
-Or install and run as a script:
-```bash
-uv pip install .
-swarmbot
-```
-
-The bot will join `#swarm` as `swarmbot` and wait for `@mention` commands.
+The bot will load the local creds, create a short-lived PDS session, join the configured IRC rooms (default `#swarm` and `#latha`), and mirror any enabled Bluesky feed(s) into `#latha`.
 
 ## Usage in #swarm
 
@@ -52,44 +47,48 @@ The bot will join `#swarm` as `swarmbot` and wait for `@mention` commands.
 <alice> @researcher what is the capital of France
 <swarmbot> alice: The capital of France is Paris.
 
-<bob> @coder fix my bug
-<swarmbot> bob: Unknown agent '@coder'. Available: researcher
+<bob> @obsidian fix my bug
+<swarmbot> bob: Unknown agent '@obsidian'. Available: researcher, obsidian
 ```
 
-## Configuration (`config.yaml`)
+## Configuration (`swarm.yaml`)
 
-| Key | Default | Description |
-|-----|---------|-------------|
-| `irc.server` | `irc.freeq.at` | IRC server hostname |
-| `irc.port` | `6667` | IRC server port |
-| `irc.nick` | `swarmbot` | Bot nickname |
-| `irc.channel` | `#swarm` | Channel to join |
-| `letta.base_url` | `https://api.letta.com/v1` | Letta API base URL |
-| `letta.timeout` | `60` | Request timeout in seconds |
-| `agents.*` | *(see file)* | Map of `@name` → Letta `agent_id` |
+Key fields:
+
+- `server.mode` / `server.apiKey` — Letta API auth
+- `agent.name` / `agent.id` — default Letta agent
+- `channels.irc.server` — IRC WebSocket URL
+- `channels.irc.nick` / `channels.irc.joinChannels` — IRC identity and ordered rooms to join (Freeq defaults to `#swarm` and `#latha`)
+- `channels.irc.allowedUsers` — exact allowlist for inbound messages
+- `channels.irc.messageReadDelayMs` — ignore initial Freeq scrollback after joining
+- `channels.bluesky.feedUri` / `channels.bluesky.mirrorChannel` / `channels.bluesky.limit` / `channels.bluesky.pollIntervalMs` — Bluesky feed generator URI, mirror target, fetch limit, and polling cadence (the current config uses the For You feed at `at://did:plc:3guzzweuqraryl3rdkimjamk/app.bsky.feed.generator/for-you` with `limit: 1`)
+- `channels.bluesky.apiBaseUrl` — optional Bluesky AppView/XRPC base URL; defaults to `https://api.bsky.app`
+- `channels.bluesky` is read-only — posts are ingested and mirrored into IRC, but the adapter will not publish back to Bluesky
+- `agents.*` — map of `@name` → Letta `agent_id`
 
 ## Adding More Agents
 
-Edit `config.yaml`:
+Edit `swarm.yaml`:
 
 ```yaml
 agents:
-  researcher: "agent-941987c9-9a0e-4076-9ff2-f05354529d47"
-  coder: "agent-your-coder-agent-id-here"
+  researcher: "agent-ac7541ac-0292-463e-9b72-2182ad91ddf2"
+  obsidian: "agent-62060ac1-999d-47cc-8d0e-eafa3f360a6b"
 ```
 
-Then restart the bot. Users can immediately use `@coder ...`.
+Then restart the bot. Users can immediately use `@obsidian ...`.
 
 ## Troubleshooting
 
 | Symptom | Likely Cause | Fix |
 |---------|-------------|-----|
 | `401 Unauthorized` | Missing `LETTA_API_KEY` | Export the env var |
-| `Unknown agent` | Name not in `agents` map | Add it to `config.yaml` |
+| `Freeq creds` error | `FREEQ_CREDS_PATH` is missing or wrong | Point it at a rookery creds JSON |
+| `Unknown agent` | Name not in `agents` map | Add it to `swarm.yaml` |
 | Timeout errors | Letta API is slow | Increase `letta.timeout` |
 | Won't reconnect | Network blip | Wait — backoff handles it |
 
 ## Related Projects
 
 - **[panproto](https://github.com/panproto/panproto)** — Schematic version control for data schemas.
-  Relevant for evolving `config.yaml` structure, agent response formats, or conversation memory schemas as the bot grows.
+  Relevant for evolving `swarm.yaml` structure, agent response formats, or conversation memory schemas as the bot grows.

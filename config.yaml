@@ -1,19 +1,24 @@
-irc:
-  server: irc.freeq.at
-  port: 6667
-  nick: swarmbot
-  channel: "#swarm"
+mode: api
+apiKey: "${LETTA_API_KEY}"
 
-letta:
-  api_key: "${LETTA_API_KEY}"
-  base_url: "https://api.letta.com/v1"
-  timeout: 180
+agent:
+  name: swarm
+  # id: "${LETTA_AGENT_ID}"  # Optional: set to use a specific agent
 
+channels:
+  irc:
+    enabled: true
+    server: wss://irc.freeq.at/irc
+    nick: swarmbot
+    joinChannels:
+      - "#swarm"
+    dmPolicy: allowlist
+    allowedUsers:
+      - "nandi.latha.org"
+    maxMessageLength: 400
+    chunkDelay: 1.0
+    messageReadDelayMs: 2000
+
+# Agent dispatch map: @<name> → Letta agent ID
 agents:
-  researcher: "agent-941987c9-9a0e-4076-9ff2-f05354529d47"
-
-bot:
-  max_message_length: 400
-  reconnect_delay: 5
-  reconnect_backoff: 2
-  chunk_delay: 1.0
+  researcher: "${LETTA_AGENT_RESEARCHER_ID}"

@@ -6,3 +6,12 @@ dist/
 uv.lock
 .venv/
 *.pyc
+.env
+node_modules/
+.wrangler/
+.letta/
+working/
+bun.lock
+*.car
+lettabot-agent.json
+lettabot-agent.json.bak
