@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 import { buildPdsSessionPayload, createFreeqSession, type FreeqCredentials, type FreeqSession } from '../src/auth.js';
 import { loadConfig } from '../src/config.js';
+import { loadDotEnv } from '../src/index.js';
 import { IrcAdapter } from '../src/channels/irc/adapter.js';
 import { channelPlugin } from '../src/channels/irc/plugin.js';
 
@@ -144,6 +145,73 @@ test('normalizes a single IRC channel into joinChannels', async () => {
     assert.deepEqual(config.channels.irc.joinChannels, ['#swarm']);
     assert.equal(config.channels.irc.channel, '#swarm');
   } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('bluesky auth rejects blank env vars', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'swarm-config-'));
+  const configPath = join(dir, 'swarm.yaml');
+  const previousIdentifier = process.env.TEST_BLUESKY_IDENTIFIER;
+  const previousAppPassword = process.env.TEST_BLUESKY_APP_PASSWORD;
+
+  process.env.TEST_BLUESKY_IDENTIFIER = '';
+  process.env.TEST_BLUESKY_APP_PASSWORD = '';
+
+  try {
+    await writeFile(
+      configPath,
+      `server:\n  mode: api\nagent:\n  name: swarm\nchannels:\n  irc:\n    enabled: true\n    server: wss://irc.freeq.at/irc\n    nick: swarmbot\n    channel: \"#swarm\"\n    dmPolicy: allowlist\n    allowedUsers:\n      - nandi.latha.org\n    maxMessageLength: 400\n    chunkDelay: 1.0\n  bluesky:\n    enabled: true\n    feedUri: at://did:plc:feed/app.bsky.feed.generator/for-you\n    mirrorChannel: \"#latha\"\n    auth:\n      identifier: \${TEST_BLUESKY_IDENTIFIER}\n      appPassword: \${TEST_BLUESKY_APP_PASSWORD}\n      pdsUrl: https://bsky.social\n`,
+    );
+
+    await assert.rejects(
+      () => loadConfig(configPath),
+      /Bluesky auth must define identifier and appPassword/,
+    );
+  } finally {
+    if (previousIdentifier === undefined) {
+      delete process.env.TEST_BLUESKY_IDENTIFIER;
+    } else {
+      process.env.TEST_BLUESKY_IDENTIFIER = previousIdentifier;
+    }
+
+    if (previousAppPassword === undefined) {
+      delete process.env.TEST_BLUESKY_APP_PASSWORD;
+    } else {
+      process.env.TEST_BLUESKY_APP_PASSWORD = previousAppPassword;
+    }
+
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('loadDotEnv fills blank env vars', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'swarm-env-'));
+  const envPath = join(dir, '.env');
+  const previousIdentifier = process.env.BLUESKY_IDENTIFIER;
+  const previousAppPassword = process.env.BLUESKY_APP_PASSWORD;
+
+  process.env.BLUESKY_IDENTIFIER = '';
+  process.env.BLUESKY_APP_PASSWORD = '';
+
+  try {
+    await writeFile(envPath, 'BLUESKY_IDENTIFIER=identifier-from-file\nBLUESKY_APP_PASSWORD=app-password-from-file\n');
+    await loadDotEnv(envPath);
+    assert.equal(process.env.BLUESKY_IDENTIFIER, 'identifier-from-file');
+    assert.equal(process.env.BLUESKY_APP_PASSWORD, 'app-password-from-file');
+  } finally {
+    if (previousIdentifier === undefined) {
+      delete process.env.BLUESKY_IDENTIFIER;
+    } else {
+      process.env.BLUESKY_IDENTIFIER = previousIdentifier;
+    }
+
+    if (previousAppPassword === undefined) {
+      delete process.env.BLUESKY_APP_PASSWORD;
+    } else {
+      process.env.BLUESKY_APP_PASSWORD = previousAppPassword;
+    }
+
     await rm(dir, { recursive: true, force: true });
   }
 });

@@ -72,6 +72,8 @@ function normalizeBlueskyConfig(bluesky: BlueskyConfig | undefined): BlueskyConf
     throw new Error('Bluesky config must define a feedUri');
   }
 
+  const auth = normalizeBlueskyAuth(bluesky.auth);
+
   return {
     ...bluesky,
     feedUri,
@@ -79,6 +81,25 @@ function normalizeBlueskyConfig(bluesky: BlueskyConfig | undefined): BlueskyConf
     pollIntervalMs: bluesky.pollIntervalMs > 0 ? bluesky.pollIntervalMs : 60_000,
     limit: bluesky.limit && bluesky.limit > 0 ? bluesky.limit : 1,
     apiBaseUrl: bluesky.apiBaseUrl?.trim() || undefined,
+    auth,
+  };
+}
+
+function normalizeBlueskyAuth(auth: BlueskyConfig['auth'] | undefined): BlueskyConfig['auth'] | undefined {
+  if (!auth) {
+    return undefined;
+  }
+
+  const identifier = auth.identifier.trim();
+  const appPassword = auth.appPassword.trim();
+  if (!identifier || !appPassword) {
+    throw new Error('Bluesky auth must define identifier and appPassword');
+  }
+
+  return {
+    identifier,
+    appPassword,
+    pdsUrl: auth.pdsUrl?.trim() || undefined,
   };
 }
 

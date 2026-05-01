@@ -3,8 +3,8 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "start": "tsx src/index.ts",
-    "dev": "tsx watch src/index.ts",
+    "start": "BLUESKY_IDENTIFIER=$BLUESKY_IDENTIFIER BLUESKY_APP_PASSWORD=$BLUESKY_APP_PASSWORD tsx src/index.ts",
+    "dev": "BLUESKY_IDENTIFIER=$BLUESKY_IDENTIFIER BLUESKY_APP_PASSWORD=$BLUESKY_APP_PASSWORD tsx watch src/index.ts",
     "test": "node --import tsx --test test/freeq-bot-key-auth.test.ts test/swarm-bot.test.ts test/bluesky-channel.test.ts"
   },
   "dependencies": {

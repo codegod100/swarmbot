@@ -99,26 +99,26 @@ function createFakeClient() {
   };
 }
 
-function createFeedResponse(uri: string, text: string, createdAt = '2026-04-30T00:00:00.000Z') {
+function createFeedResponse(
+  entries: Array<{ uri: string; text: string; createdAt?: string; handle?: string; displayName?: string }>,
+) {
   return {
-    feed: [
-      {
-        post: {
-          uri,
-          cid: `${uri}-cid`,
-          indexedAt: createdAt,
-          author: {
-            did: 'did:plc:author',
-            handle: 'author.bsky.social',
-            displayName: 'Author',
-          },
-          record: {
-            text,
-            createdAt,
-          },
+    feed: entries.map(({ uri, text, createdAt = '2026-04-30T00:00:00.000Z', handle = 'author.bsky.social', displayName = 'Author' }) => ({
+      post: {
+        uri,
+        cid: `${uri}-cid`,
+        indexedAt: createdAt,
+        author: {
+          did: 'did:plc:author',
+          handle,
+          displayName,
+        },
+        record: {
+          text,
+          createdAt,
         },
       },
-    ],
+    })),
   };
 }
 
@@ -133,7 +133,7 @@ test('bluesky adapter polls a feed and deduplicates posts', async () => {
   const messages: InboundMessage[] = [];
   const feedUri = 'at://did:plc:feed/app.bsky.feed.generator/whimsy';
   const postUri = 'at://did:plc:author/app.bsky.feed.post/123';
-  const fetchImpl = async () => createJsonResponse(createFeedResponse(postUri, 'Hello from Bluesky'));
+  const fetchImpl = async () => createJsonResponse(createFeedResponse([{ uri: postUri, text: 'Hello from Bluesky' }]));
 
   const adapter = new BlueskyAdapter(
     {
@@ -197,6 +197,62 @@ test('bluesky adapter fails fast on an invalid feed response', async () => {
 
   await assert.rejects(() => adapter.start(), /HTTP 400/);
   assert.equal(adapter.isRunning(), false);
+});
+
+test('bluesky adapter authenticates before fetching a personalized feed', async () => {
+  const feedUri = 'at://did:plc:feed/app.bsky.feed.generator/for-you';
+  const requests: Array<{ url: string; init?: RequestInit }> = [];
+  const fetchImpl = async (input: string | URL | Request, init?: RequestInit) => {
+    const url = String(input);
+    requests.push({ url, init });
+
+    if (url.includes('/xrpc/com.atproto.server.createSession')) {
+      const body = init?.body ? JSON.parse(String(init.body)) : {};
+      assert.deepEqual(body, {
+        identifier: 'nandi.bsky.social',
+        password: 'app-password',
+      });
+      return createJsonResponse({ accessJwt: 'jwt-1' });
+    }
+
+    if (url.includes('/xrpc/app.bsky.feed.getFeed')) {
+      const headers = new Headers(init?.headers);
+      assert.equal(headers.get('authorization'), 'Bearer jwt-1');
+      assert.match(url, /feed=at%3A%2F%2Fdid%3Aplc%3Afeed%2Fapp\.bsky\.feed\.generator%2Ffor-you/);
+      return createJsonResponse(createFeedResponse([{ uri: 'at://did:plc:author/app.bsky.feed.post/1', text: 'Hello' }]));
+    }
+
+    throw new Error(`Unexpected request: ${url}`);
+  };
+
+  const adapter = new BlueskyAdapter(
+    {
+      enabled: true,
+      feedUri,
+      pollIntervalMs: 60_000,
+      limit: 1,
+      auth: {
+        identifier: 'nandi.bsky.social',
+        appPassword: 'app-password',
+        pdsUrl: 'https://bsky.social',
+      },
+    },
+    {
+      fetchImpl: fetchImpl as typeof fetch,
+      logger: {
+        info() {},
+        warn() {},
+        error() {},
+        debug() {},
+      },
+    },
+  );
+
+  const posts = await adapter.fetchRecentPosts(1);
+  assert.equal(requests.length, 2);
+  assert.equal(posts.length, 1);
+  assert.equal(posts[0].text, 'Hello');
+  assert.equal(posts[0].groupName, feedUri);
 });
 
 test('swarm bot mirrors Bluesky feed posts into #latha', async () => {
@@ -270,11 +326,114 @@ test('swarm bot mirrors Bluesky feed posts into #latha', async () => {
   assert.equal(fakeClient.messageCreates.length, 0);
   assert.equal(ircAdapter.sent.length, 1);
   assert.deepEqual(ircAdapter.sent[0].chatId, '#latha');
-  assert.match(ircAdapter.sent[0].text, /Bluesky feed \| author\.bsky\.social:/);
-  assert.match(ircAdapter.sent[0].text, /Hello from Bluesky/);
-  assert.match(ircAdapter.sent[0].text, /at:\/\/did:plc:author\/app\.bsky\.feed\.post\/123/);
+  assert.equal(ircAdapter.sent[0].text, 'Hello from Bluesky [https://bsky.app/profile/author.bsky.social/post/123]');
 
   await bot.stop();
   assert.equal(ircAdapter.stopped, true);
   assert.equal(blueskyAdapter.stopped, true);
+});
+
+test('@updates returns the last five posts from the Bluesky feed', async () => {
+  const ircAdapter = new FakeAdapter('irc', 'fake-irc');
+  const fakeClient = createFakeClient();
+  const feedUri = 'at://did:plc:feed/app.bsky.feed.generator/for-you';
+  const feedPosts: InboundMessage[] = Array.from({ length: 5 }, (_value, index) => {
+    const postIndex = index + 1;
+    return {
+      channel: 'bluesky',
+      chatId: `at://did:plc:author/app.bsky.feed.post/${postIndex}`,
+      userId: 'did:plc:author',
+      userName: `author${postIndex}.bsky.social`,
+      userHandle: `author${postIndex}.bsky.social`,
+      messageId: `at://did:plc:author/app.bsky.feed.post/${postIndex}`,
+      text: `Post ${postIndex}`,
+      timestamp: new Date(`2026-04-30T0${index}:00:00.000Z`),
+      messageType: 'public',
+      isGroup: true,
+      groupName: feedUri,
+      extraContext: {
+        feedUri,
+        postUri: `at://did:plc:author/app.bsky.feed.post/${postIndex}`,
+        postCid: `at://did:plc:author/app.bsky.feed.post/${postIndex}-cid`,
+        authorDid: 'did:plc:author',
+        authorHandle: `author${postIndex}.bsky.social`,
+      },
+    };
+  });
+
+  class FakeBlueskyFeedAdapter extends FakeAdapter {
+    async fetchRecentPosts(limit = 5): Promise<InboundMessage[]> {
+      return feedPosts.slice(0, limit);
+    }
+  }
+
+  const blueskyAdapter = new FakeBlueskyFeedAdapter('bluesky', 'fake-bluesky');
+
+  const bot = createSwarmBot({
+    config: {
+      server: { mode: 'api', apiKey: 'key' },
+      agent: { name: 'swarm', id: 'agent-default' },
+      channels: {
+        irc: {
+          enabled: true,
+          server: 'wss://irc.example/irc',
+          nick: 'swarmbot',
+          channel: '#swarm',
+          joinChannels: ['#swarm', '#latha'],
+          dmPolicy: 'allowlist',
+          allowedUsers: ['alice'],
+          maxMessageLength: 400,
+          chunkDelay: 0,
+          messageReadDelayMs: 0,
+        },
+        bluesky: {
+          enabled: true,
+          feedUri,
+          mirrorChannel: '#latha',
+          pollIntervalMs: 60_000,
+          limit: 1,
+        },
+      },
+    },
+    client: fakeClient.client,
+    adapterFactory: async () => ircAdapter,
+    blueskyAdapterFactory: async () => blueskyAdapter,
+    logger: {
+      info() {},
+      warn() {},
+      error() {},
+      debug() {},
+    },
+  });
+
+  await bot.start();
+  assert.equal(typeof ircAdapter.onMessage, 'function');
+  assert.equal(fakeClient.conversationCreates.length, 0);
+
+  await ircAdapter.emit({
+    channel: 'irc',
+    chatId: '#swarm',
+    userId: 'alice',
+    userName: 'alice',
+    messageId: 'msg-1',
+    text: '@updates',
+    timestamp: new Date('2026-05-01T00:00:00.000Z'),
+    messageType: 'group',
+    isGroup: true,
+    groupName: '#swarm',
+  });
+
+  assert.equal(ircAdapter.sent.length, 5);
+  assert.deepEqual(
+    ircAdapter.sent.map((msg) => msg.text),
+    [
+      'Post 1 [https://bsky.app/profile/author1.bsky.social/post/1]',
+      'Post 2 [https://bsky.app/profile/author2.bsky.social/post/2]',
+      'Post 3 [https://bsky.app/profile/author3.bsky.social/post/3]',
+      'Post 4 [https://bsky.app/profile/author4.bsky.social/post/4]',
+      'Post 5 [https://bsky.app/profile/author5.bsky.social/post/5]',
+    ],
+  );
+
+  await bot.stop();
 });

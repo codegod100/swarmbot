@@ -14,11 +14,16 @@ class BlueskyFeedRequestError extends Error {
     message: string,
     public readonly status: number,
     public readonly feedUri: string,
-    public readonly apiBaseUrl: string,
+    public readonly requestBaseUrl: string,
   ) {
     super(message);
     this.name = 'BlueskyFeedRequestError';
   }
+}
+
+interface BlueskyAuthSession {
+  accessJwt: string;
+  requestBaseUrl: string;
 }
 
 interface BlueskyFeedPostAuthor {
@@ -75,6 +80,8 @@ export class BlueskyAdapter implements ChannelAdapter {
   private timer: ReturnType<typeof setTimeout> | null = null;
   private readonly seenPosts = new Set<string>();
   private readonly seenOrder: string[] = [];
+  private authSession: BlueskyAuthSession | null = null;
+  private authSessionPromise: Promise<BlueskyAuthSession | null> | null = null;
 
   onMessage?: (msg: InboundMessage) => Promise<void>;
 
@@ -129,6 +136,24 @@ export class BlueskyAdapter implements ChannelAdapter {
     };
   }
 
+  async fetchRecentPosts(limit = 5): Promise<InboundMessage[]> {
+    const response = await this.fetchFeed(undefined, limit);
+    const data = (await response.json()) as BlueskyFeedResponse;
+    const posts = Array.isArray(data.feed) ? data.feed : [];
+
+    return posts
+      .map((entry) => {
+        const post = entry?.post;
+        const identifier = this.getPostIdentifier(post);
+        if (!identifier) {
+          return null;
+        }
+
+        return this.toInboundMessage(post, identifier);
+      })
+      .filter((message): message is InboundMessage => message !== null);
+  }
+
   private getPollIntervalMs(): number {
     return this.config.pollIntervalMs > 0 ? this.config.pollIntervalMs : DEFAULT_POLL_INTERVAL_MS;
   }
@@ -137,9 +162,18 @@ export class BlueskyAdapter implements ChannelAdapter {
     return this.config.limit && this.config.limit > 0 ? this.config.limit : DEFAULT_LIMIT;
   }
 
-  private getApiBaseUrl(): string {
-    const base = (this.config.apiBaseUrl ?? 'https://api.bsky.app').trim();
+  private getAnonymousApiBaseUrl(): string {
+    const base = (this.config.apiBaseUrl ?? 'https://public.api.bsky.app').trim();
     return base.replace(/\/+$/, '');
+  }
+
+  private getAuthRequestBaseUrl(): string {
+    const base = (this.config.auth?.pdsUrl ?? 'https://bsky.social').trim();
+    return base.replace(/\/+$/, '');
+  }
+
+  private hasAuthConfig(): boolean {
+    return Boolean(this.config.auth?.identifier && this.config.auth?.appPassword);
   }
 
   private async pollCycle(): Promise<void> {
@@ -153,7 +187,7 @@ export class BlueskyAdapter implements ChannelAdapter {
       if (error instanceof BlueskyFeedRequestError && error.status >= 400 && error.status < 500) {
         this.running = false;
         this.log.error(
-          `Bluesky feed ${this.config.feedUri} is not usable via ${error.apiBaseUrl} (HTTP ${error.status}): ${error.message}`,
+          `Bluesky feed ${this.config.feedUri} is not usable via ${error.requestBaseUrl} (HTTP ${error.status}): ${error.message}`,
           error,
         );
         return;
@@ -225,22 +259,119 @@ export class BlueskyAdapter implements ChannelAdapter {
     await this.fetchFeed(undefined, 1);
   }
 
+  private async ensureAuthSession(forceRefresh = false): Promise<BlueskyAuthSession | null> {
+    if (!this.hasAuthConfig()) {
+      return null;
+    }
+
+    if (!forceRefresh && this.authSession) {
+      return this.authSession;
+    }
+
+    if (!forceRefresh && this.authSessionPromise) {
+      return this.authSessionPromise;
+    }
+
+    const promise = this.createAuthSession();
+    this.authSessionPromise = promise;
+
+    try {
+      const session = await promise;
+      this.authSession = session;
+      return session;
+    } finally {
+      if (this.authSessionPromise === promise) {
+        this.authSessionPromise = null;
+      }
+    }
+  }
+
+  private async createAuthSession(): Promise<BlueskyAuthSession> {
+    if (!this.config.auth) {
+      throw new Error('Bluesky auth is not configured');
+    }
+
+    const requestBaseUrl = this.getAuthRequestBaseUrl();
+    const url = new URL('/xrpc/com.atproto.server.createSession', requestBaseUrl);
+    const response = await this.fetchImpl(url.toString(), {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        identifier: this.config.auth.identifier,
+        password: this.config.auth.appPassword,
+      }),
+    });
+
+    if (!response.ok) {
+      const body = await this.readResponseBody(response);
+      throw new BlueskyFeedRequestError(
+        `Bluesky auth failed with HTTP ${response.status}${body ? `: ${body}` : ''}`,
+        response.status,
+        this.config.feedUri,
+        requestBaseUrl,
+      );
+    }
+
+    const data = (await response.json()) as { accessJwt?: string };
+    if (!data.accessJwt) {
+      throw new Error('Bluesky auth response did not include an access token');
+    }
+
+    return {
+      accessJwt: data.accessJwt,
+      requestBaseUrl,
+    };
+  }
+
+  private async readResponseBody(response: Response): Promise<string> {
+    try {
+      const body = await response.text();
+      const trimmed = body.trim();
+      return trimmed.length > 0 ? trimmed : response.statusText;
+    } catch {
+      return response.statusText;
+    }
+  }
+
   private async fetchFeed(cursor?: string, limitOverride?: number): Promise<Response> {
-    const apiBaseUrl = this.getApiBaseUrl();
-    const url = new URL('/xrpc/app.bsky.feed.getFeed', apiBaseUrl);
+    const authSession = await this.ensureAuthSession();
+    const requestBaseUrl = authSession?.requestBaseUrl ?? this.getAnonymousApiBaseUrl();
+    const url = new URL('/xrpc/app.bsky.feed.getFeed', requestBaseUrl);
     url.searchParams.set('feed', this.config.feedUri);
     url.searchParams.set('limit', String(limitOverride ?? this.getLimit()));
     if (cursor) {
       url.searchParams.set('cursor', cursor);
     }
 
-    const response = await this.fetchImpl(url.toString());
+    const headers = authSession
+      ? {
+          authorization: `Bearer ${authSession.accessJwt}`,
+        }
+      : undefined;
+
+    let response = await this.fetchImpl(url.toString(), headers ? { headers } : undefined);
+
+    if (response.status === 401 && this.hasAuthConfig()) {
+      this.authSession = null;
+      const refreshedSession = await this.ensureAuthSession(true);
+      if (refreshedSession) {
+        response = await this.fetchImpl(url.toString(), {
+          headers: {
+            authorization: `Bearer ${refreshedSession.accessJwt}`,
+          },
+        });
+      }
+    }
+
     if (!response.ok) {
+      const body = await this.readResponseBody(response);
       throw new BlueskyFeedRequestError(
-        `Bluesky feed request failed with HTTP ${response.status}`,
+        `Bluesky feed request failed with HTTP ${response.status}${body ? `: ${body}` : ''}`,
         response.status,
         this.config.feedUri,
-        apiBaseUrl,
+        requestBaseUrl,
       );
     }
 
@@ -280,11 +411,27 @@ export class BlueskyAdapter implements ChannelAdapter {
       extraContext: {
         feedUri: this.config.feedUri,
         postUri: post?.uri?.trim() ?? identifier,
+        postUrl: this.getAppViewPostUrl(post),
         postCid: post?.cid?.trim() ?? '',
         authorDid,
         authorHandle,
       },
     };
+  }
+
+  private getAppViewPostUrl(post: BlueskyFeedPost | undefined): string {
+    const uri = post?.uri?.trim();
+    const handle = post?.author?.handle?.trim();
+    if (!uri || !handle) {
+      return '';
+    }
+
+    const match = /^at:\/\/[^/]+\/app\.bsky\.feed\.post\/([^/]+)$/.exec(uri);
+    if (!match) {
+      return '';
+    }
+
+    return `https://bsky.app/profile/${handle}/post/${match[1]}`;
   }
 
   private markSeen(identifier: string): void {

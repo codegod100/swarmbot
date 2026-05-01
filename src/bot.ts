@@ -57,6 +57,10 @@ type MentionTarget = {
   prompt: string;
 };
 
+type BlueskyFeedReader = {
+  fetchRecentPosts(limit?: number): Promise<InboundMessage[]>;
+};
+
 function normalizeBaseUrl(baseUrl: string): string {
   const trimmed = baseUrl.trim();
   if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
@@ -104,6 +108,10 @@ function parseExplicitMention(text: string): { agentName: string; prompt: string
     agentName: match[1] ?? '',
     prompt: (match[2] ?? '').trim(),
   };
+}
+
+function parseUpdatesCommand(text: string): boolean {
+  return /^@updates\b[,:;.!?]*\s*(.*)$/i.test(text.trim());
 }
 
 function getConfiguredAgentMap(config: SwarmConfig): Map<string, string> {
@@ -261,6 +269,13 @@ export class SwarmBot {
       return;
     }
 
+    if (msg.isGroup === true && parseUpdatesCommand(msg.text)) {
+      await this.enqueue(`updates:${msg.chatId}`, async () => {
+        await this.handleUpdatesCommand(adapter, msg);
+      });
+      return;
+    }
+
     const target = await this.resolveTarget(adapter, msg);
     if (!target) {
       return;
@@ -302,10 +317,9 @@ export class SwarmBot {
   }
 
   private formatBlueskyMirrorMessage(msg: InboundMessage): string {
-    const author = msg.userHandle?.trim() || msg.userName?.trim() || msg.userId.trim() || 'unknown author';
-    const postUrl = msg.extraContext?.postUri?.trim() || msg.messageId || msg.chatId;
+    const postUrl = this.getBlueskyPostUrl(msg);
     const text = msg.text.trim() || '(no text)';
-    return `Bluesky feed | ${author}: ${text} [${postUrl}]`;
+    return postUrl ? `${text} [${postUrl}]` : text;
   }
 
   private isFromBot(msg: InboundMessage): boolean {
@@ -318,6 +332,77 @@ export class SwarmBot {
     await adapter.sendMessage({ chatId, text });
   }
 
+  private async handleUpdatesCommand(adapter: ChannelAdapter, msg: InboundMessage): Promise<void> {
+    const bluesky = this.getBlueskyFeedReader();
+    if (!bluesky) {
+      await this.reply(adapter, msg.chatId, 'Bluesky updates are not enabled.');
+      return;
+    }
+
+    try {
+      const posts = await bluesky.fetchRecentPosts(5);
+      if (posts.length === 0) {
+        await this.reply(adapter, msg.chatId, 'No posts found in the current feed.');
+        return;
+      }
+
+      for (const post of posts.slice(0, 5)) {
+        await this.reply(adapter, msg.chatId, this.formatUpdateItem(post));
+      }
+    } catch (error) {
+      this.log.error(
+        `Failed to load Bluesky updates: ${error instanceof Error ? error.message : String(error)}`,
+        error,
+      );
+      await this.reply(adapter, msg.chatId, 'Could not load Bluesky updates right now.');
+    }
+  }
+
+  private formatUpdateItem(post: InboundMessage): string {
+    const text = this.compactText(post.text) || '(no text)';
+    const postUrl = this.getBlueskyPostUrl(post);
+    return postUrl ? `${text} [${postUrl}]` : text;
+  }
+
+  private getBlueskyPostUrl(msg: InboundMessage): string {
+    const explicitUrl = msg.extraContext?.postUrl?.trim();
+    if (explicitUrl) {
+      return explicitUrl;
+    }
+
+    const postUri = msg.extraContext?.postUri?.trim();
+    if (postUri && !postUri.startsWith('at://')) {
+      return postUri;
+    }
+
+    if (postUri) {
+      return this.atUriToAppViewUrl(postUri, msg.userHandle?.trim() || msg.userName?.trim());
+    }
+
+    if (msg.messageId.startsWith('at://')) {
+      return this.atUriToAppViewUrl(msg.messageId, msg.userHandle?.trim() || msg.userName?.trim());
+    }
+
+    if (msg.chatId.startsWith('at://')) {
+      return this.atUriToAppViewUrl(msg.chatId, msg.userHandle?.trim() || msg.userName?.trim());
+    }
+
+    return '';
+  }
+
+  private atUriToAppViewUrl(uri: string, handle?: string): string {
+    const match = /^at:\/\/[^/]+\/app\.bsky\.feed\.post\/([^/]+)$/.exec(uri.trim());
+    if (!match || !handle) {
+      return '';
+    }
+
+    return `https://bsky.app/profile/${handle}/post/${match[1]}`;
+  }
+
+  private compactText(text: string): string {
+    return text.replace(/\s+/g, ' ').trim();
+  }
+
   private getAdapter(id: string): ChannelAdapter | null {
     for (const adapter of this.adapters.values()) {
       if (adapter.id === id) {
@@ -325,6 +410,20 @@ export class SwarmBot {
       }
     }
     return null;
+  }
+
+  private getBlueskyFeedReader(): BlueskyFeedReader | null {
+    const adapter = this.getAdapter('bluesky');
+    if (!adapter) {
+      return null;
+    }
+
+    const candidate = adapter as ChannelAdapter & Partial<BlueskyFeedReader>;
+    if (typeof candidate.fetchRecentPosts !== 'function') {
+      return null;
+    }
+
+    return candidate as BlueskyFeedReader;
   }
 
   private async sendPrompt(conversationId: string, prompt: string): Promise<string> {

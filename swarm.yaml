@@ -24,7 +24,11 @@ channels:
     enabled: true
     feedUri: at://did:plc:3guzzweuqraryl3rdkimjamk/app.bsky.feed.generator/for-you
     mirrorChannel: "#latha"
-    apiBaseUrl: https://api.bsky.app
+    apiBaseUrl: https://public.api.bsky.app
+    auth:
+      identifier: ${BLUESKY_IDENTIFIER}
+      appPassword: ${BLUESKY_APP_PASSWORD}
+      pdsUrl: https://bsky.social
     pollIntervalMs: 60000
     limit: 1
 

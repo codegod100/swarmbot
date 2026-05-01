@@ -12,6 +12,7 @@ The runnable entrypoint is TypeScript: `npm start`.
 - **Reconnect logic** — automatically reconnects to IRC with exponential backoff
 - **Chunked replies** — long agent responses are split safely across multiple IRC lines
 - **Read-only Bluesky feed ingest** — polls a specific feed URI and mirrors new posts into `#latha` without posting back to Bluesky or sending them through Letta
+- **@updates command** — fetches the latest five posts from the configured Bluesky feed into IRC on demand
 
 ## Setup
 
@@ -62,7 +63,8 @@ Key fields:
 - `channels.irc.allowedUsers` — exact allowlist for inbound messages
 - `channels.irc.messageReadDelayMs` — ignore initial Freeq scrollback after joining
 - `channels.bluesky.feedUri` / `channels.bluesky.mirrorChannel` / `channels.bluesky.limit` / `channels.bluesky.pollIntervalMs` — Bluesky feed generator URI, mirror target, fetch limit, and polling cadence (the current config uses the For You feed at `at://did:plc:3guzzweuqraryl3rdkimjamk/app.bsky.feed.generator/for-you` with `limit: 1`)
-- `channels.bluesky.apiBaseUrl` — optional Bluesky AppView/XRPC base URL; defaults to `https://api.bsky.app`
+- `channels.bluesky.apiBaseUrl` — optional Bluesky AppView/XRPC base URL for anonymous requests; defaults to `https://public.api.bsky.app`
+- `channels.bluesky.auth.identifier` / `channels.bluesky.auth.appPassword` / `channels.bluesky.auth.pdsUrl` — optional Bluesky session for personalized feeds like For You; `pdsUrl` defaults to `https://bsky.social`
 - `channels.bluesky` is read-only — posts are ingested and mirrored into IRC, but the adapter will not publish back to Bluesky
 - `agents.*` — map of `@name` → Letta `agent_id`
 

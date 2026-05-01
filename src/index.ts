@@ -20,7 +20,7 @@ import { loadConfig } from './config.js';
 const log = createLogger('Swarm');
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
-async function loadDotEnv(filePath: string): Promise<void> {
+export async function loadDotEnv(filePath: string): Promise<void> {
   if (!existsSync(filePath)) {
     return;
   }
@@ -39,7 +39,7 @@ async function loadDotEnv(filePath: string): Promise<void> {
     }
 
     const key = entry.slice(0, equals).trim();
-    if (!key || process.env[key] !== undefined) {
+    if (!key || (process.env[key] !== undefined && process.env[key] !== '')) {
       continue;
     }
 
@@ -93,7 +93,9 @@ async function main() {
   process.once('SIGTERM', shutdown);
 }
 
-main().catch((err) => {
-  log.error('Fatal error:', err);
-  process.exit(1);
-});
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  void main().catch((err) => {
+    log.error({ err }, 'Fatal error');
+    process.exit(1);
+  });
+}
